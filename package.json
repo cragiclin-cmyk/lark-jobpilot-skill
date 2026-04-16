@@ -1,0 +1,17 @@
+{
+  "name": "parse-jd-skill",
+  "version": "1.0.0",
+  "description": "lark-cli 自定义 Skill：解析招聘 JD 并存入飞书多维表格",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "parse": "node dist/coze-parser.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "@types/node": "^20.0.0"
+  }
+}
