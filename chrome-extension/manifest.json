@@ -1,0 +1,64 @@
+{
+  "manifest_version": 3,
+  "name": "JobPilot JD Grabber",
+  "version": "3.0.3",
+  "description": "智能抓取招聘网站 JD 信息，支持本地 OCR 薪资识别",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "clipboardWrite"
+  ],
+  "host_permissions": [
+    "https://www.zhipin.com/*",
+    "https://zhipin.com/*",
+    "*://*.zhipin.com/*",
+    "https://www.lagou.com/*",
+    "https://lagou.com/*",
+    "*://*.lagou.com/*",
+    "https://www.51job.com/*",
+    "https://51job.com/*",
+    "*://*.51job.com/*",
+    "https://www.zhaopin.com/*",
+    "https://zhaopin.com/*",
+    "*://*.zhaopin.com/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "JobPilot JD Grabber"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.zhipin.com/*",
+        "https://zhipin.com/*",
+        "*://*.zhipin.com/*",
+        "https://www.lagou.com/*",
+        "https://lagou.com/*",
+        "*://*.lagou.com/*",
+        "https://www.51job.com/*",
+        "https://51job.com/*",
+        "*://*.51job.com/*",
+        "https://www.zhaopin.com/*",
+        "https://zhaopin.com/*",
+        "*://*.zhaopin.com/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "tesseract.min.js",
+        "worker.min.js",
+        "tesseract-core.wasm.js",
+        "eng.traineddata",
+        "eng.traineddata.gz"
+      ],
+      "matches": ["<all_urls>"]
+    }
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  }
+}

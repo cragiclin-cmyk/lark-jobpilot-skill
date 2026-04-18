@@ -6,6 +6,10 @@ node_modules/
 .env.local
 .env.*.local
 
+# Temp files (lark-cli 临时文件)
+.temp_record.json
+.temp_field.json
+
 # IDE
 .idea/
 .vscode/

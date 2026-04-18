@@ -1,37 +1,89 @@
 /**
- * Parse_JD Skill — JD 智能解析 + 简历匹配模块
+ * lark-jobpilot-skill — JD 智能解析 + 简历匹配模块
  *
  * 功能：
  *   1. 调用 JobHunter_Core_Engine 工作流解析 JD
  *   2. 调用 lark-cli 写入飞书多维表格
  * 输出：JSON 字符串（stdout）
  *
- * 环境变量（可通过 .env 文件配置）：
- *   COZE_API_TOKEN      — Coze API 访问令牌（必填）
- *   COZE_WORKFLOW_ID    — JobHunter_Core_Engine 工作流 ID（必填）
- *   BITABLE_APP_TOKEN   — 飞书多维表格 App Token（--save 时必填）
- *   TABLE_ID            — 飞书多维表格数据表 ID（--save 时必填）
- *   COZE_API_BASE       — Coze API 基地址（可选，默认 https://api.coze.cn）
+ * 配置方式：
+ *   方式一（推荐）：创建 ~/.jobpilot/config.json 文件
+ *   方式二：设置环境变量 COZE_API_TOKEN 和 COZE_WORKFLOW_ID
  */
 
-import { config } from "dotenv";
 import { resolve } from "path";
-import { readFileSync, existsSync } from "fs";
+import { homedir } from "os";
+import { readFileSync, existsSync, writeFileSync, mkdirSync, unlinkSync } from "fs";
 import { execSync } from "child_process";
 
-config({ path: resolve(process.cwd(), ".env") });
+// ============================================================
+// 配置管理
+// ============================================================
+
+const CONFIG_DIR = resolve(homedir(), ".jobpilot");
+const CONFIG_FILE = resolve(CONFIG_DIR, "config.json");
+
+interface Config {
+  coze_api_token?: string;
+  coze_workflow_id?: string;
+  coze_api_base?: string;
+}
+
+function loadConfig(): Config {
+  const config: Config = {};
+  
+  if (existsSync(CONFIG_FILE)) {
+    try {
+      const content = readFileSync(CONFIG_FILE, "utf-8");
+      const fileConfig = JSON.parse(content);
+      Object.assign(config, fileConfig);
+    } catch {
+      // 忽略解析错误
+    }
+  }
+  
+  if (process.env.COZE_API_TOKEN) {
+    config.coze_api_token = process.env.COZE_API_TOKEN;
+  }
+  if (process.env.COZE_WORKFLOW_ID) {
+    config.coze_workflow_id = process.env.COZE_WORKFLOW_ID;
+  }
+  if (process.env.COZE_API_BASE) {
+    config.coze_api_base = process.env.COZE_API_BASE;
+  }
+  
+  return config;
+}
+
+function ensureConfigDir(): void {
+  if (!existsSync(CONFIG_DIR)) {
+    mkdirSync(CONFIG_DIR, { recursive: true });
+  }
+}
+
+function createConfigTemplate(): void {
+  ensureConfigDir();
+  const template: Config = {
+    coze_api_token: "你的Coze_API_Token",
+    coze_workflow_id: "你的Workflow_ID",
+    coze_api_base: "https://api.coze.cn"
+  };
+  writeFileSync(CONFIG_FILE, JSON.stringify(template, null, 2));
+  console.log(JSON.stringify({
+    success: true,
+    message: `已创建配置文件模板: ${CONFIG_FILE}\n请编辑该文件，填入你的 Coze API Token 和 Workflow ID`
+  }, null, 2));
+}
 
 // ============================================================
 // 类型定义
 // ============================================================
 
-/** Coze Workflow 运行请求体 */
 interface CozeWorkflowRequest {
   workflow_id: string;
   parameters: Record<string, string>;
 }
 
-/** Coze Workflow 同步运行响应 */
 interface CozeWorkflowResponse {
   code: number;
   msg: string;
@@ -39,7 +91,6 @@ interface CozeWorkflowResponse {
   debug_url?: string;
 }
 
-/** JobHunter_Core_Engine 工作流输出结果 */
 interface JobHunterOutput {
   岗位名称: string;
   公司名称: string;
@@ -51,12 +102,12 @@ interface JobHunterOutput {
   综合匹配度: string;
 }
 
-/** Skill 最终输出格式 */
 interface SkillOutput {
   success: boolean;
   data?: JobHunterOutput;
   raw_text?: string;
   record_id?: string;
+  base_url?: string;
   error?: string;
   debug_url?: string;
 }
@@ -65,30 +116,29 @@ interface SkillOutput {
 // 核心逻辑
 // ============================================================
 
-/**
- * 调用 JobHunter_Core_Engine 工作流
- */
 async function runJobHunter(jdText: string, resumeFilePath?: string): Promise<SkillOutput> {
-  const apiToken = process.env.COZE_API_TOKEN;
-  const workflowId = process.env.COZE_WORKFLOW_ID;
-  const apiBase = process.env.COZE_API_BASE || "https://api.coze.cn";
+  const config = loadConfig();
+  const apiToken = config.coze_api_token;
+  const workflowId = config.coze_workflow_id;
+  const apiBase = config.coze_api_base || "https://api.coze.cn";
 
   if (!apiToken) {
     return {
       success: false,
-      error: "环境变量 COZE_API_TOKEN 未设置。\n请创建 .env 文件并配置：COZE_API_TOKEN=your_token_here",
+      error: `Coze API Token 未配置。\n\n请执行以下步骤：\n1. 运行: node dist/coze-parser.js --init\n2. 编辑配置文件: ${CONFIG_FILE}\n3. 填入你的 Coze API Token 和 Workflow ID`,
     };
   }
 
   if (!workflowId) {
     return {
       success: false,
-      error: "环境变量 COZE_WORKFLOW_ID 未设置。\n请在 Coze 平台创建 Workflow 后，将 Workflow ID 配置到 .env 文件：COZE_WORKFLOW_ID=your_workflow_id",
+      error: `Coze Workflow ID 未配置。\n\n请在配置文件 ${CONFIG_FILE} 中填入 Workflow ID`,
     };
   }
 
   const parameters: Record<string, string> = {
     raw_jd: jdText,
+    resume_file: "",
   };
 
   if (resumeFilePath) {
@@ -202,33 +252,12 @@ async function runJobHunter(jdText: string, resumeFilePath?: string): Promise<Sk
   }
 }
 
-/**
- * 调用 lark-cli 写入飞书多维表格
- */
-function saveToBitable(data: JobHunterOutput, rawJd: string): SkillOutput {
-  const appToken = process.env.BITABLE_APP_TOKEN;
-  const tableId = process.env.TABLE_ID;
-
-  if (!appToken) {
-    return {
-      success: false,
-      error: "环境变量 BITABLE_APP_TOKEN 未设置。\n请在 .env 文件中配置：BITABLE_APP_TOKEN=your_app_token",
-    };
-  }
-
-  if (!tableId) {
-    return {
-      success: false,
-      error: "环境变量 TABLE_ID 未设置。\n请在 .env 文件中配置：TABLE_ID=your_table_id",
-    };
-  }
-
+function saveToBitable(data: JobHunterOutput, rawJd: string, baseToken: string, tableId: string): SkillOutput {
   const recordData = {
     岗位名称: data.岗位名称,
     公司名称: data.公司名称,
     工作地点: data.工作地点,
     薪资待遇: data.薪资待遇,
-    投递状态: "未投递",
     核心关键词: data.核心关键词,
     能力雷达图解析: data.能力雷达图解析,
     备考行动清单: data.备考行动清单,
@@ -236,12 +265,19 @@ function saveToBitable(data: JobHunterOutput, rawJd: string): SkillOutput {
     "JD 原文": rawJd,
   };
 
-  const jsonStr = JSON.stringify(recordData).replace(/"/g, '\\"');
+  const tempFile = resolve(process.cwd(), ".temp_record.json");
+  writeFileSync(tempFile, JSON.stringify(recordData, null, 2));
 
-  const cmd = `lark-cli base +record-upsert --base-token "${appToken}" --table-id "${tableId}" --json "${jsonStr}"`;
+  const cmd = `lark-cli base +record-upsert --base-token "${baseToken}" --table-id "${tableId}" --json "@.temp_record.json"`;
 
   try {
     const result = execSync(cmd, { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] });
+    
+    try {
+      unlinkSync(tempFile);
+    } catch {
+      // 忽略删除错误
+    }
     
     let recordId = "";
     try {
@@ -256,13 +292,84 @@ function saveToBitable(data: JobHunterOutput, rawJd: string): SkillOutput {
       data,
       raw_text: rawJd,
       record_id: recordId,
+      base_url: `https://feishu.cn/base/${baseToken}`,
     };
   } catch (err: unknown) {
+    try {
+      unlinkSync(tempFile);
+    } catch {
+      // 忽略删除错误
+    }
     const message = err instanceof Error ? err.message : String(err);
     return {
       success: false,
-      error: `lark-cli 执行失败: ${message}\n请确保已安装 lark-cli 并完成登录认证。`,
+      error: `lark-cli 执行失败: ${message}\n请确保已安装 lark-cli 并完成登录认证。\n安装: npm install -g @larksuite/cli\n登录: lark-cli auth login`,
     };
+  }
+}
+
+function createBitable(): { success: boolean; app_token?: string; table_id?: string; error?: string } {
+  try {
+    const result = execSync('lark-cli base +base-create --name "求职管理表"', {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"]
+    });
+    
+    const parsed = JSON.parse(result);
+    const appToken = parsed.data?.base?.base_token;
+    
+    if (!appToken) {
+      return { success: false, error: "创建多维表格失败：未返回 base_token" };
+    }
+    
+    const tableListResult = execSync(`lark-cli base +table-list --base-token "${appToken}"`, {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"]
+    });
+    
+    const tableListParsed = JSON.parse(tableListResult);
+    const tableId = tableListParsed.data?.items?.[0]?.table_id;
+    
+    if (!tableId) {
+      return { success: false, error: "获取数据表ID失败" };
+    }
+    
+    const fields = [
+      { field_name: "岗位名称", type: "text" },
+      { field_name: "公司名称", type: "text" },
+      { field_name: "工作地点", type: "text" },
+      { field_name: "薪资待遇", type: "text" },
+      { field_name: "核心关键词", type: "text" },
+      { field_name: "能力雷达图解析", type: "text" },
+      { field_name: "备考行动清单", type: "text" },
+      { field_name: "综合匹配度", type: "text" },
+      { field_name: "JD 原文", type: "text" },
+    ];
+    
+    for (const field of fields) {
+      const fieldFile = resolve(process.cwd(), ".temp_field.json");
+      writeFileSync(fieldFile, JSON.stringify(field, null, 2));
+      
+      try {
+        execSync(`lark-cli base +field-create --base-token "${appToken}" --table-id "${tableId}" --json "@.temp_field.json"`, {
+          encoding: "utf-8",
+          stdio: ["pipe", "pipe", "pipe"]
+        });
+      } catch {
+        // 忽略字段创建错误
+      }
+      
+      try {
+        unlinkSync(fieldFile);
+      } catch {
+        // 忽略删除错误
+      }
+    }
+    
+    return { success: true, app_token: appToken, table_id: tableId };
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { success: false, error: `创建多维表格失败: ${message}` };
   }
 }
 
@@ -273,27 +380,32 @@ function saveToBitable(data: JobHunterOutput, rawJd: string): SkillOutput {
 function printUsage(): void {
   console.log(JSON.stringify({
     success: false,
-    error: `Parse_JD Skill 用法：
+    error: `JobPilot 用法：
 
-1. 仅解析 JD：
-   node dist/coze-parser.js "JD文本内容"
+【初始化配置】
+  node dist/coze-parser.js --init
+  创建配置文件模板，然后编辑填入你的 Coze API Token 和 Workflow ID
 
-2. JD 解析 + 简历匹配：
-   node dist/coze-parser.js "JD文本内容" "简历文件路径"
+【解析 JD】
+  node dist/coze-parser.js "JD文本内容"
 
-3. 解析并保存到飞书多维表格：
-   node dist/coze-parser.js "JD文本内容" --save
-   node dist/coze-parser.js "JD文本内容" "简历文件路径" --save
+【JD 解析 + 简历匹配】
+  node dist/coze-parser.js "JD文本内容" "简历文件路径"
 
-示例：
-   node dist/coze-parser.js "岗位职责：负责大模型产品..."
-   node dist/coze-parser.js "岗位职责..." "./resume.txt" --save
+【保存到飞书多维表格】
+  # 自动创建多维表格（推荐）
+  node dist/coze-parser.js "JD文本内容" --save --create-base
+  
+  # 指定已有的多维表格
+  node dist/coze-parser.js "JD文本内容" --save --base-token <Token> --table-id <TableID>
 
-环境变量：
-   COZE_API_TOKEN      — Coze API Token（必填）
-   COZE_WORKFLOW_ID    — 工作流 ID（必填）
-   BITABLE_APP_TOKEN   — 多维表格 Token（--save 时必填）
-   TABLE_ID            — 数据表 ID（--save 时必填）`,
+【示例】
+  node dist/coze-parser.js "岗位职责：负责大模型产品..."
+  node dist/coze-parser.js "岗位职责..." "./resume.txt"
+  node dist/coze-parser.js "岗位职责..." --save --create-base
+
+【配置文件位置】
+  ${CONFIG_FILE}`,
   }, null, 2));
 }
 
@@ -305,11 +417,36 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  if (args[0] === "--init") {
+    createConfigTemplate();
+    return;
+  }
+
   const shouldSave = args.includes("--save");
-  const filteredArgs = args.filter((arg) => arg !== "--save");
+  const shouldCreateBase = args.includes("--create-base");
+  const filteredArgs = args.filter((arg) => !["--save", "--create-base"].includes(arg));
+  
+  let baseToken = "";
+  let tableId = "";
+  const baseTokenIndex = filteredArgs.indexOf("--base-token");
+  if (baseTokenIndex !== -1 && filteredArgs[baseTokenIndex + 1]) {
+    baseToken = filteredArgs[baseTokenIndex + 1];
+    filteredArgs.splice(baseTokenIndex, 2);
+  }
+  
+  const tableIdIndex = filteredArgs.indexOf("--table-id");
+  if (tableIdIndex !== -1 && filteredArgs[tableIdIndex + 1]) {
+    tableId = filteredArgs[tableIdIndex + 1];
+    filteredArgs.splice(tableIdIndex, 2);
+  }
 
   const jdText = filteredArgs[0];
   const resumeFilePath = filteredArgs.length > 1 ? filteredArgs[1] : undefined;
+
+  if (!jdText) {
+    printUsage();
+    process.exit(1);
+  }
 
   const result = await runJobHunter(jdText, resumeFilePath);
 
@@ -319,7 +456,33 @@ async function main(): Promise<void> {
   }
 
   if (shouldSave && result.data) {
-    const saveResult = saveToBitable(result.data, jdText);
+    if (!baseToken && shouldCreateBase) {
+      console.log(JSON.stringify({ success: true, message: "正在创建飞书多维表格..." }, null, 2));
+      const createResult = createBitable();
+      if (!createResult.success) {
+        console.log(JSON.stringify(createResult, null, 2));
+        process.exit(1);
+      }
+      baseToken = createResult.app_token!;
+      tableId = createResult.table_id!;
+      console.log(JSON.stringify({ 
+        success: true, 
+        message: `多维表格创建成功`,
+        app_token: baseToken,
+        table_id: tableId,
+        url: `https://feishu.cn/base/${baseToken}`
+      }, null, 2));
+    }
+    
+    if (!baseToken || !tableId) {
+      console.log(JSON.stringify({
+        success: false,
+        error: `请指定多维表格 Token 和数据表 ID，或使用 --create-base 自动创建\n\n用法：\n  node dist/coze-parser.js "JD内容" --save --base-token <Token> --table-id <TableID>\n  node dist/coze-parser.js "JD内容" --save --create-base`
+      }, null, 2));
+      process.exit(1);
+    }
+    
+    const saveResult = saveToBitable(result.data, jdText, baseToken, tableId);
     console.log(JSON.stringify(saveResult, null, 2));
     
     if (!saveResult.success) {
